@@ -28,7 +28,7 @@ def _cache_path(url):
 def _extract(html, url):
     from pulpie import Extractor
 
-    markdown = Extractor().extract(html).markdown or ""
+    markdown = Extractor(max_tokens=2048, max_batch_tokens=4096).extract(html).markdown or ""
     raw_len, clean_len = len(html), len(markdown)
     if raw_len:
         saved = round((1 - clean_len / raw_len) * 100, 1)
