@@ -37,6 +37,17 @@ hermes chat -q "Extract https://example.com and summarize"
 
 Look for the `*Pulpie extraction: N → M chars (X% saved)*` footer on extracted content.
 
+## How it works
+
+When the agent calls `web_extract`, Hermes routes the URL through pulpie's pipeline:
+
+1. **Fetch** — `httpx` GET with browser User-Agent
+2. **Classify** — Pulpie encoder labels each HTML block as content or boilerplate in one forward pass
+3. **Reconstruct** — keep only content-labeled blocks, drop nav/ads/footers
+4. **Convert** — `html2text` renders clean Markdown for the LLM
+
+For JS-heavy pages (SPAs, news sites), use the bundled `pulpie-browser` script — Playwright renders the page in headless Chromium first, then the same pipeline runs on the full DOM.
+
 ## Browser script
 
 For JS-heavy pages (SPAs, news sites), render first via Playwright then clean:
