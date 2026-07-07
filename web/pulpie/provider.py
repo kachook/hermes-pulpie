@@ -110,7 +110,7 @@ class PulpieWebSearchProvider(WebSearchProvider):
 
         # Lazy-load the extractor once per call (model cached internally)
         try:
-            extractor = pulpie.Extractor()
+            extractor = pulpie.Extractor(max_tokens=2048, max_batch_tokens=4096)
         except Exception as exc:
             logger.warning("Pulpie Extractor init failed: %s", exc)
             return [
