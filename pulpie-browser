@@ -1,137 +1,72 @@
 #!/usr/bin/env python3
-"""
-pulpie-browser: Render a JS page → clean through Pulpie → stdout.
+"""pulpie-browser: Render JS page → Pulpie → clean Markdown → stdout.
 
-Three modes, auto-detected by priority:
+Auto-detects CAMOFOX_URL — routes through Camoufox anti-detection Firefox if set,
+falling back to Playwright Chromium on any failure.
 
-  1. Camoufox mode (default when CAMOFOX_URL is set)
-     Routes through the Camoufox anti-detection Firefox server.
-     Auto-starts the server if it's not running.
-
-  2. Playwright Chromium mode (fallback)
-     Uses a headless Chromium via Playwright. Used when:
-     - CAMOFOX_URL is not set, or
-     - Camoufox server fails to start / respond.
-
-Usage:
-    pulpie-browser https://www.msn.com/...
-    echo "https://..." | pulpie-browser
-
-Output: clean Markdown (stdout). Errors: stderr.
+Usage:  pulpie-browser <url>   |   echo "<url>" | pulpie-browser
 """
 
-import os
-import sys
-import hashlib
-import json
-import logging
-import time
-import uuid
-import subprocess
+import os, sys, hashlib, logging, time, uuid, subprocess
 from urllib.parse import urlparse
 
-# Quiet down noisy libs
 logging.getLogger("pulpie").setLevel(logging.WARNING)
 logging.getLogger("transformers").setLevel(logging.WARNING)
 logging.getLogger("playwright").setLevel(logging.WARNING)
 
 CACHE_DIR = os.path.expanduser("~/.hermes/cache/web")
-CHROME = os.path.expanduser(
-    "~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome"
-)
+CHROME = os.path.expanduser("~/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome")
 CAMOFOX_SCRIPT = os.path.expanduser("~/.hermes/scripts/camofox-manage.sh")
 
-# ---------------------------------------------------------------------------
-# Cache
-# ---------------------------------------------------------------------------
 
-def _cache_path(url: str) -> str:
+def _cache_path(url):
     domain = urlparse(url).netloc
     h = hashlib.sha256(url.encode()).hexdigest()[:12]
     return os.path.join(CACHE_DIR, f"{domain}-{h}.md")
 
 
-def _save_and_print(markdown: str, url: str) -> None:
+def _extract(html, url):
+    from pulpie import Extractor
+
+    markdown = Extractor().extract(html).markdown or ""
+    raw_len, clean_len = len(html), len(markdown)
+    if raw_len:
+        saved = round((1 - clean_len / raw_len) * 100, 1)
+        markdown += f"\n\n---\n*Pulpie extraction: {raw_len:,} → {clean_len:,} chars ({saved}% saved)*\n"
+
     os.makedirs(CACHE_DIR, exist_ok=True)
-    path = _cache_path(url)
-    with open(path, "w") as f:
+    with open(_cache_path(url), "w") as f:
         f.write(markdown)
     print(markdown)
 
 
-# ---------------------------------------------------------------------------
-# Pulpie extraction
-# ---------------------------------------------------------------------------
-
-def _extract(html: str, url: str) -> None:
-    from pulpie import Extractor
-
-    extractor = Extractor()
-    result = extractor.extract(html)
-    markdown = result.markdown or ""
-
-    raw_len = len(html)
-    clean_len = len(markdown)
-    if raw_len:
-        saved = round((1 - clean_len / raw_len) * 100, 1)
-        footer = (
-            f"\n\n---\n"
-            f"*Pulpie extraction: {raw_len:,} → {clean_len:,} chars "
-            f"({saved}% saved)*\n"
-        )
-        markdown += footer
-
-    _save_and_print(markdown, url)
-
-
-# ---------------------------------------------------------------------------
-# Camoufox mode
-# ---------------------------------------------------------------------------
-
-def _camoufox_url() -> str:
-    """Return CAMOFOX_URL from env, or empty string."""
-    return os.getenv("CAMOFOX_URL", "").rstrip("/")
-
-
-def _camoufox_healthy(base: str, timeout: float = 15.0) -> bool:
-    """Poll /health until it returns 200 or timeout."""
+def _camoufox_healthy(base, timeout):
+    """Poll /health until 200 or timeout."""
     import requests
     deadline = time.time() + timeout
-    last_err = ""
     while time.time() < deadline:
         try:
-            resp = requests.get(f"{base}/health", timeout=5)
-            if resp.status_code == 200:
+            if requests.get(f"{base}/health", timeout=5).status_code == 200:
                 return True
-            last_err = f"status {resp.status_code}"
-        except requests.RequestException as e:
-            last_err = str(e)
+        except requests.RequestException:
+            pass
         time.sleep(1)
-    logging.error("Camoufox health check failed after %.1fs: %s", timeout, last_err)
     return False
 
 
-def _camoufox_start() -> bool:
-    """Start the Camoufox server via camofox-manage.sh."""
+def _camoufox_start():
+    """Start Camoufox server. Returns True/False."""
     try:
         result = subprocess.run(
             ["bash", CAMOFOX_SCRIPT, "start"],
             capture_output=True, text=True, timeout=30,
         )
-        if result.returncode != 0:
-            logging.error("camofox-manage.sh start failed: %s", result.stderr.strip())
-            return False
-        logging.info("Camoufox server started: %s", result.stdout.strip())
-        return True
-    except subprocess.TimeoutExpired:
-        logging.error("camofox-manage.sh start timed out")
-        return False
-    except Exception as e:
-        logging.error("Failed to start Camoufox: %s", e)
+        return result.returncode == 0
+    except Exception:
         return False
 
 
-def _camoufox_extract(url: str, base: str) -> bool:
+def _camoufox_extract(url, base):
     """Extract page via Camoufox REST API. Returns True on success."""
     import requests
 
@@ -139,66 +74,52 @@ def _camoufox_extract(url: str, base: str) -> bool:
     session_key = f"pulpie_{uuid.uuid4().hex[:8]}"
 
     try:
-        # 1. Create tab and navigate
-        session = requests.post(
+        # Create tab + navigate
+        resp = requests.post(
             f"{base}/tabs",
             json={"userId": user_id, "listItemId": session_key, "url": url},
             timeout=60,
         )
-        session.raise_for_status()
-        tab_data = session.json()
-        tab_id = tab_data.get("tabId")
+        resp.raise_for_status()
+        tab_id = resp.json().get("tabId")
         if not tab_id:
-            logging.error("Camoufox /tabs response missing tabId: %s", tab_data)
             return False
 
-        # 2. Wait a moment for JS to render
-        time.sleep(2)
+        time.sleep(2)  # let JS render
 
-        # 3. Evaluate JS to get full page HTML
-        eval_resp = requests.post(
+        # Evaluate JS → get HTML
+        resp = requests.post(
             f"{base}/tabs/{tab_id}/evaluate",
             json={"expression": "document.documentElement.outerHTML", "userId": user_id},
             timeout=30,
         )
-        eval_resp.raise_for_status()
-        raw = eval_resp.json()
-        html = raw.get("result", "")
+        resp.raise_for_status()
+        html = resp.json().get("result", "")
 
         if not html or not isinstance(html, str) or len(html) < 50:
-            logging.warning("Camoufox returned minimal HTML (%d chars)", len(html))
             return False
 
-    except requests.RequestException as e:
-        logging.error("Camoufox API error: %s", e)
+    except requests.RequestException:
         return False
     finally:
-        # 4. Always try to close the session
         try:
             requests.delete(f"{base}/sessions/{user_id}", timeout=10)
         except Exception:
             pass
 
-    # 5. Pulpie extraction
     _extract(html, url)
     return True
 
 
-# ---------------------------------------------------------------------------
-# Playwright Chromium fallback mode
-# ---------------------------------------------------------------------------
-
-def _playwright_extract(url: str) -> None:
-    """Fallback: render with Playwright Chromium, extract with Pulpie."""
+def _playwright_extract(url):
+    """Fallback: Playwright Chromium → Pulpie."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=CHROME, headless=True)
         context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-            ),
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             viewport={"width": 1920, "height": 1080},
         )
         page = context.new_page()
@@ -210,35 +131,20 @@ def _playwright_extract(url: str) -> None:
     _extract(html, url)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
     url = (sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read().strip())
     if not url:
         print("Usage: pulpie-browser <url>", file=sys.stderr)
         sys.exit(1)
 
-    # Try Camoufox path first
-    base = _camoufox_url()
+    base = os.getenv("CAMOFOX_URL", "").rstrip("/")
     if base:
         if not _camoufox_healthy(base, timeout=3):
-            logging.info("Camoufox not running — starting...")
-            if _camoufox_start():
-                if not _camoufox_healthy(base, timeout=20):
-                    logging.error("Camoufox failed to start, falling back to Chromium")
-                    base = ""
-            else:
-                logging.error("Camoufox start failed, falling back to Chromium")
+            if not _camoufox_start() or not _camoufox_healthy(base, timeout=20):
                 base = ""
+        if base and _camoufox_extract(url, base):
+            return
 
-        if base:
-            if _camoufox_extract(url, base):
-                return
-            logging.warning("Camoufox extraction failed, falling back to Chromium")
-
-    # Fallback
     _playwright_extract(url)
 
 
