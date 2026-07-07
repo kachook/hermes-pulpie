@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-pulpie"
+version = "1.0.0"
+description = "Hermes Agent plugin — Pulpie content extraction backend (local encoder model, no API key needed)"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "pulpie>=0.0.2",
+    "html2text",
+    "httpx",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+pulpie = "hermes_pulpie"
+
+[tool.setuptools.packages.find]
+where = ["src"]

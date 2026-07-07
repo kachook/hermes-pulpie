@@ -1,0 +1,7 @@
+name: web-pulpie
+version: 1.0.0
+description: "Pulpie content extraction — local encoder model that strips nav, ads, sidebars, and footers from HTML. Auto-detects GPU (CUDA/MPS) and falls back to CPU."
+author: Feyn Inc. / Hermes Agent
+kind: backend
+provides_web_providers:
+  - pulpie
