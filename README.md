@@ -32,7 +32,7 @@ hermes config set web.extract_backend pulpie
 ## Verify
 
 ```bash
-hermes chat -q "Extract https://example.com and summarize" --yolo
+hermes chat -q "Extract https://example.com and summarize"
 ```
 
 Look for the `*Pulpie extraction: N → M chars (X% saved)*` footer on extracted content.
