@@ -66,6 +66,83 @@ Requires `playwright` and Chromium: `pip install playwright && playwright instal
 | `html2text` | Converts cleaned HTML → Markdown (without it, raw HTML is returned) |
 | `httpx` | HTTP client for fetching URLs |
 
+## Uninstall
+
+Two install modes are possible (pip, or `hermes plugins install` / manual copy). Run the steps that match how you installed.
+
+### 1. Reset the config (always)
+
+```bash
+hermes config set web.extract_backend ""
+```
+
+This stops Hermes from routing `web_extract` through Pulpie; new sessions fall back to the default backend.
+
+### 2. Remove the plugin
+
+If installed via `hermes plugins install`:
+
+```bash
+hermes plugins remove pulpie
+```
+
+If installed via pip:
+
+```bash
+~/.hermes/hermes-agent/venv/bin/pip uninstall -y hermes-pulpie
+```
+
+If installed manually (or left behind by the steps above), delete the directory directly:
+
+```bash
+rm -rf ~/.hermes/plugins/web/pulpie
+```
+
+### 3. Remove the browser script
+
+`pulpie-browser` is standalone and is **not** removed by pip or `hermes plugins remove`:
+
+```bash
+rm -f ~/.hermes/scripts/pulpie-browser
+```
+
+### 4. Uninstall Python packages
+
+Only `pulpie` and `html2text` are Pulpie-specific. **Do not uninstall `httpx`** — it is a core Hermes dependency used by many other tools (`hermes-agent`, `openai`, `ddgs`, etc.).
+
+```bash
+~/.hermes/hermes-agent/venv/bin/pip uninstall -y pulpie html2text
+```
+
+### 5. (Optional) Free the model weights
+
+The ~421MB encoder cache is safe to delete:
+
+```bash
+rm -rf ~/.cache/huggingface/hub/models--feyninc--pulpie-orange-small
+```
+
+### 6. (Optional) Remove the project source
+
+`~/hermes/projects/hermes-pulpie` is a git submodule of the main hermes repo. To remove the source checkout entirely:
+
+```bash
+cd ~/hermes && \
+  git submodule deinit -f projects/hermes-pulpie && \
+  git rm -f projects/hermes-pulpie && \
+  rm -rf .git/modules/projects/hermes-pulpie
+```
+
+Skip this step if you only want to disable the plugin but keep the code.
+
+### Verify
+
+```bash
+hermes config show | grep extract_backend   # should print nothing (empty)
+hermes plugins list                          # pulpie should not appear
+ls ~/.hermes/plugins/web/pulpie 2>&1         # "No such file or directory"
+```
+
 ## License
 
 Plugin code: MIT.  
